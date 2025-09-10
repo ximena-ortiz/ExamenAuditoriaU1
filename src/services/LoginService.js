@@ -1,45 +1,60 @@
-// Simple authentication service with hardcoded credentials
-const credentials = {
-  username: "admin",
-  password: "123456"
-};
+// Autenticación simple con credenciales fijas y mejoras de sesión
+const credentials = { username: "admin", password: "123456" };
+const MAX_ATTEMPTS = 3;
+const BLOCK_MS = 30_000; // 30s de bloqueo
+const SESSION_MS = 2 * 60 * 60 * 1000; // 2h
 
-// Login function that returns a promise
+function now() { return Date.now(); }
+
 export const login = (username, password) => {
   return new Promise((resolve, reject) => {
-    // Simulate server delay
+    const blockedUntil = parseInt(localStorage.getItem('blockedUntil') || '0', 10);
+    if (now() < blockedUntil) {
+      const secs = Math.ceil((blockedUntil - now()) / 1000);
+      return reject({ success: false, message: `Demasiados intentos. Intenta en ${secs}s` });
+    }
+
     setTimeout(() => {
       if (username === credentials.username && password === credentials.password) {
-        // Create a session token (could be more sophisticated in a real app)
-        const token = "mock-jwt-token-" + Math.random().toString(36).substr(2);
-        // Store token in localStorage
+        const token = "mock-jwt-" + Math.random().toString(36).slice(2);
+        const expiresAt = now() + SESSION_MS;
         localStorage.setItem('authToken', token);
         localStorage.setItem('user', username);
-        resolve({ success: true, user: username, token });
+        localStorage.setItem('expiresAt', String(expiresAt));
+        localStorage.removeItem('attempts');
+        localStorage.removeItem('blockedUntil');
+        resolve({ success: true, user: username, token, expiresAt });
       } else {
+        const att = parseInt(localStorage.getItem('attempts') || '0', 10) + 1;
+        localStorage.setItem('attempts', String(att));
+        if (att >= MAX_ATTEMPTS) {
+          localStorage.setItem('blockedUntil', String(now() + BLOCK_MS));
+          localStorage.removeItem('attempts');
+          return reject({ success: false, message: "Cuenta bloqueada temporalmente" });
+        }
         reject({ success: false, message: "Credenciales inválidas" });
       }
-    }, 500); // 500ms delay to simulate network
+    }, 400);
   });
 };
 
-// Check if user is logged in
 export const isAuthenticated = () => {
   const token = localStorage.getItem('authToken');
   const user = localStorage.getItem('user');
-  return token && user;
+  const expiresAt = parseInt(localStorage.getItem('expiresAt') || '0', 10);
+  if (!token || !user) return false;
+  if (now() > expiresAt) {
+    logout();
+    return false;
+  }
+  return true;
 };
 
-// Logout function
 export const logout = () => {
   localStorage.removeItem('authToken');
   localStorage.removeItem('user');
+  localStorage.removeItem('expiresAt');
   return { success: true };
 };
 
-export default {
-  login,
-  isAuthenticated,
-  logout
-};
-
+export default { login, isAuthenticated, logout };

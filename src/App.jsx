@@ -1,15 +1,28 @@
-import React, { useContext, useEffect, useRef, useState } from 'react';
-import { Button, Form, Input, Popconfirm, Table, Modal, Layout, Menu, Typography, message } from 'antd';
-import { LogoutOutlined, UserOutlined } from '@ant-design/icons';
-import axios from 'axios';
-import Login from './components/Login';
-import { isAuthenticated, logout } from './services/LoginService';
+import React, { useContext, useEffect, useRef, useState } from "react";
+import {
+  Button,
+  Form,
+  Input,
+  Popconfirm,
+  Table,
+  Modal,
+  Layout,
+  Typography,
+  message,
+} from "antd";
+import { LogoutOutlined, UserOutlined } from "@ant-design/icons";
+import axios from "axios";
 
-const { Header, Content, Footer } = Layout;
-const { Title, Text } = Typography;
+// Ajusta estas rutas según tu estructura actual
+import Login from "./components/Login.jsx";
+import { isAuthenticated, logout } from "./services/LoginService";
+
+axios.defaults.baseURL =
+  import.meta?.env?.VITE_API_URL || "http://localhost:5500";
+
+// ---- Editable table helpers (Ant Design pattern) ----
 const EditableContext = React.createContext(null);
 
-// Editable Row Component
 const EditableRow = ({ index, ...props }) => {
   const [form] = Form.useForm();
   return (
@@ -21,7 +34,6 @@ const EditableRow = ({ index, ...props }) => {
   );
 };
 
-// Editable Cell Component
 const EditableCell = ({
   title,
   editable,
@@ -34,45 +46,39 @@ const EditableCell = ({
   const [editing, setEditing] = useState(false);
   const inputRef = useRef(null);
   const form = useContext(EditableContext);
-  
+
   useEffect(() => {
     if (editing) {
-      inputRef.current.focus();
+      inputRef.current?.focus();
     }
   }, [editing]);
 
   const toggleEdit = () => {
     setEditing(!editing);
-    form.setFieldsValue({
-      [dataIndex]: record[dataIndex],
-    });
+    form.setFieldsValue({ [dataIndex]: record[dataIndex] });
   };
 
   const save = async () => {
     try {
       const values = await form.validateFields();
       toggleEdit();
-      handleSave({
-        ...record,
-        ...values,
-      });
-    } catch (errInfo) {
-      console.log('Save failed:', errInfo);
+      handleSave({ ...record, ...values });
+    } catch (err) {
+      console.error("Save failed:", err);
     }
   };
 
   let childNode = children;
+
   if (editable) {
     childNode = editing ? (
       <Form.Item
-        style={{
-          margin: 0,
-        }}
+        style={{ margin: 0 }}
         name={dataIndex}
         rules={[
           {
             required: true,
-            message: `${title} is required.`,
+            message: `${title} es requerido`,
           },
         ]}
       >
@@ -81,204 +87,145 @@ const EditableCell = ({
     ) : (
       <div
         className="editable-cell-value-wrap"
-        style={{
-          paddingRight: 24,
-        }}
+        style={{ paddingRight: 24, minHeight: 22, cursor: "pointer" }}
         onClick={toggleEdit}
+        title="Haz clic para editar"
       >
         {children}
       </div>
     );
   }
+
   return <td {...restProps}>{childNode}</td>;
 };
 
-// Main App Component
+// ---- App principal ----
+const { Header, Content, Footer } = Layout;
+const { Title, Text } = Typography;
+
 const App = () => {
-  // Authentication state
   const [authenticated, setAuthenticated] = useState(isAuthenticated());
-  const [currentUser, setCurrentUser] = useState(localStorage.getItem('user') || '');
-  
-  // Handle successful login
+  const [currentUser, setCurrentUser] = useState(
+    localStorage.getItem("user") || ""
+  );
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRecommending, setIsRecommending] = useState(false);
+  const [suggestEnabled, setSuggestEnabled] = useState(false);
+
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [newData, setNewData] = useState({ activo: "" });
+
+  const [dataSource, setDataSource] = useState([]);
+  const [count, setCount] = useState(1);
+
+  // ---- Login handlers ----
   const handleLoginSuccess = (response) => {
     setAuthenticated(true);
     setCurrentUser(response.user);
     message.success(`Bienvenido, ${response.user}!`);
   };
-  
-  // Handle logout
+
   const handleLogout = () => {
     logout();
     setAuthenticated(false);
-    setCurrentUser('');
-    message.info('Sesión cerrada correctamente');
-  };
-  
-  // Application state
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRecommending, setIsRecommending] = useState(false);
-  const [suggestEnabled, setSuggestEnabled] = useState(false);
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [dataSource, setDataSource] = useState([]);
-  const [count, setCount] = useState(1);
-  const [newData, setNewData] = useState({
-    activo: '',
-    riesgo: '',
-    impacto: '',
-    tratamiento: ''
-  });
-
-  // Show modal for adding new asset
-  const showModal = () => {
-    setIsModalVisible(true);
+    setCurrentUser("");
+    message.info("Sesión cerrada correctamente");
   };
 
-  // Hide modal
-  const handleCancel = () => {
-    setIsModalVisible(false);
-  };
-  
-  // Handle deletion of a row
+  // ---- Modal add asset ----
+  const showModal = () => setIsModalVisible(true);
+  const handleCancel = () => setIsModalVisible(false);
+
   const handleDelete = (key) => {
-    const newData = dataSource.filter((item) => item.key !== key);
-    setDataSource(newData);
+    setDataSource((prev) => prev.filter((item) => item.key !== key));
   };
 
-  // Handle adding new asset (mock API call)
-  const handleOk = () => {
-    if (!newData.activo.trim()) {
-      message.error('Por favor ingresa un nombre de activo');
+  // Llamar al backend para generar 5 riesgos/impactos
+  const handleOk = async () => {
+    const activo = newData.activo.trim();
+    if (!activo) {
+      message.error("Por favor ingresa un nombre de activo");
       return;
     }
-
     setIsLoading(true);
+    try {
+      const { data } = await axios.post("/analizar-riesgos", { activo });
+      const items = (data.items || []).slice(0, 5);
+      if (!items.length) throw new Error("El motor IA no devolvió ítems");
 
-    // Mock API call with timeout
-    setTimeout(() => {
-      // Generate mock risks and impacts (but only use the first one)
-      const mockRiesgo = `Pérdida de ${newData.activo}`;
-      const mockImpacto = `Pérdida de información valiosa relacionada con ${newData.activo}`;
+      const rows = items.map((it, idx) => ({
+        key: `${count + idx}`,
+        activo,
+        riesgo: it.riesgo,
+        impacto: it.impacto,
+        tratamiento: "-",
+      }));
 
-      // Add a single row for this asset
-      addNewRow(newData.activo, mockRiesgo, mockImpacto);
-      
-      setIsModalVisible(false);
-      setIsLoading(false);
+      setDataSource((prev) => [...prev, ...rows]);
+      setCount((prev) => prev + rows.length);
       setSuggestEnabled(true);
-      message.success(`Activo "${newData.activo}" agregado con éxito`);
-    }, 1000);
+      setIsModalVisible(false);
+      message.success(`Activo "${activo}" evaluado (${rows.length} riesgos)`);
+    } catch (e) {
+      console.error(e);
+      message.error(
+        "No se pudo analizar riesgos. Revisa que el backend y Ollama estén activos."
+      );
+    } finally {
+      setIsLoading(false);
+      setNewData({ activo: "" });
+    }
   };
 
-  // Add a single new row to the table
-  const addNewRow = (activo, riesgo, impacto) => {
-    // Create a single new row
-    const newRow = {
-      key: `${count}`,
-      activo,
-      riesgo,
-      impacto,
-      tratamiento: '-'
-    };
-    
-    // Add the single row to the dataSource
-    setDataSource([...dataSource, newRow]);
-    
-    // Increment count by 1
-    setCount(count + 1);
-    
-    // Reset form
-    setNewData({
-      activo: '',
-      riesgo: '',
-      impacto: '',
-      tratamiento: ''
-    });
-  };
-
-  // Handle recommendation of treatments (mock API call)
-  const handleRecommendTreatment = () => {
-    if (dataSource.length === 0) {
-      message.warning('No hay riesgos para recomendar tratamientos');
+  // Solicitar tratamientos para cada fila
+  const handleRecommendTreatment = async () => {
+    if (!dataSource.length) {
+      message.warning("No hay riesgos para recomendar tratamientos");
       return;
     }
-
     setIsRecommending(true);
-    
-    // Mock API call with timeout
-    setTimeout(() => {
-      const treatments = [
-        'Implementación de controles de acceso físico',
-        'Copias de seguridad periódicas',
-        'Cifrado de datos sensibles',
-        'Capacitación de personal sobre seguridad',
-        'Implementación de firewall de nueva generación',
-        'Monitoreo continuo de accesos',
-        'Desarrollo de políticas de seguridad'
-      ];
-      
-      const newDataSource = dataSource.map(item => ({
-        ...item,
-        tratamiento: treatments[Math.floor(Math.random() * treatments.length)]
-      }));
-      
-      setDataSource(newDataSource);
+    try {
+      const updated = [];
+      for (const row of dataSource) {
+        if (row.tratamiento && row.tratamiento !== "-") {
+          updated.push(row);
+          continue;
+        }
+        try {
+          const { data } = await axios.post("/sugerir-tratamiento", {
+            activo: row.activo,
+            riesgo: row.riesgo,
+            impacto: row.impacto,
+          });
+          updated.push({
+            ...row,
+            tratamiento: (data && data.tratamiento) || "-",
+          });
+        } catch (err) {
+          console.error("Error recomendando tratamiento:", err);
+          updated.push({ ...row, tratamiento: row.tratamiento || "-" });
+        }
+      }
+      setDataSource(updated);
+      message.success("Tratamientos recomendados");
+    } catch (e) {
+      console.error(e);
+      message.error("No se pudieron sugerir tratamientos");
+    } finally {
       setIsRecommending(false);
-      message.success('Tratamientos recomendados con éxito');
-    }, 1500);
+    }
   };
 
-  // Handle save after cell edit
+  // ---- Editable table wiring ----
   const handleSave = (row) => {
     const newData = [...dataSource];
     const index = newData.findIndex((item) => row.key === item.key);
     const item = newData[index];
-    newData.splice(index, 1, {
-      ...item,
-      ...row,
-    });
+    newData.splice(index, 1, { ...item, ...row });
     setDataSource(newData);
   };
 
-  // Define table columns
-  const defaultColumns = [
-    {
-      title: 'Activo',
-      dataIndex: 'activo',
-      width: '15%',
-      editable: true,
-    },
-    {
-      title: 'Riesgo',
-      dataIndex: 'riesgo',
-      width: '20%',
-      editable: true,
-    },
-    {
-      title: 'Impacto',
-      dataIndex: 'impacto',
-      width: '30%',
-      editable: true,
-    },
-    {
-      title: 'Tratamiento',
-      dataIndex: 'tratamiento',
-      width: '30%',
-      editable: true,
-    },
-    {
-      title: 'Operación',
-      dataIndex: 'operation',
-      render: (_, record) => (
-        dataSource.length >= 1 ? (
-          <Popconfirm title="¿Seguro que quieres eliminar?" onConfirm={() => handleDelete(record.key)}>
-            <a>Eliminar</a>
-          </Popconfirm>
-        ) : null
-      ),
-    },
-  ];
-
-  // Set up table components
   const components = {
     body: {
       row: EditableRow,
@@ -286,11 +233,49 @@ const App = () => {
     },
   };
 
-  // Configure columns for editing
+  const defaultColumns = [
+    {
+      title: "Activo",
+      dataIndex: "activo",
+      width: "18%",
+      editable: true,
+    },
+    {
+      title: "Riesgo",
+      dataIndex: "riesgo",
+      width: "22%",
+      editable: true,
+    },
+    {
+      title: "Impacto",
+      dataIndex: "impacto",
+      width: "35%",
+      editable: true,
+    },
+    {
+      title: "Tratamiento",
+      dataIndex: "tratamiento",
+      width: "20%",
+      editable: true,
+    },
+    {
+      title: "Operación",
+      dataIndex: "operation",
+      width: "5%",
+      render: (_, record) =>
+        dataSource.length >= 1 ? (
+          <Popconfirm
+            title="¿Seguro que quieres eliminar?"
+            onConfirm={() => handleDelete(record.key)}
+          >
+            <a>Eliminar</a>
+          </Popconfirm>
+        ) : null,
+    },
+  ];
+
   const columns = defaultColumns.map((col) => {
-    if (!col.editable) {
-      return col;
-    }
+    if (!col.editable) return col;
     return {
       ...col,
       onCell: (record) => ({
@@ -303,67 +288,65 @@ const App = () => {
     };
   });
 
-  // If not authenticated, show the login page
+  // ---- Render ----
   if (!authenticated) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
   }
-  
-  // If authenticated, show the app with header and content
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <Title level={4} style={{ color: 'white', margin: 0 }}>Sistema de Auditoría de Riesgos</Title>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <Text style={{ color: 'white', marginRight: 16 }}>
+    <Layout style={{ minHeight: "100vh" }}>
+      <Header
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+      >
+        <Title level={4} style={{ color: "white", margin: 0 }}>
+          Sistema de Auditoría de Riesgos
+        </Title>
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <Text style={{ color: "white", marginRight: 16 }}>
             <UserOutlined /> {currentUser}
           </Text>
-          <Button 
-            type="link" 
-            icon={<LogoutOutlined />} 
+          <Button
+            type="link"
+            icon={<LogoutOutlined />}
             onClick={handleLogout}
-            style={{ color: 'white' }}
+            style={{ color: "white" }}
           >
             Cerrar Sesión
           </Button>
         </div>
       </Header>
-      
-      <Content style={{ padding: '24px', background: '#fff' }}>
+
+      <Content style={{ padding: 24, background: "#fff" }}>
         <div>
           <Button onClick={showModal} type="primary" style={{ marginBottom: 16 }}>
             + Agregar activo
           </Button>
-          <Button 
-            onClick={handleRecommendTreatment} 
-            type="primary" 
-            loading={isRecommending} 
-            disabled={!suggestEnabled} 
+          <Button
+            onClick={handleRecommendTreatment}
+            type="primary"
+            loading={isRecommending}
+            disabled={!suggestEnabled}
             style={{ marginBottom: 16, marginLeft: 8 }}
           >
             Recomendar tratamientos
           </Button>
-          
+
           <Modal
             title="Agregar nuevo activo"
-            visible={isModalVisible}
+            open={isModalVisible}
             onOk={handleOk}
             onCancel={handleCancel}
-            okText="Agregar"
+            okText="Evaluar"
             cancelText="Cancelar"
             confirmLoading={isLoading}
           >
             <Form layout="vertical">
-              <Form.Item 
-                label="Activo" 
-                rules={[{ required: true, message: 'Por favor ingresa un nombre de activo' }]}
-              >
-                <Input 
-                  name="activo" 
-                  value={newData.activo} 
-                  onChange={(e) => setNewData({ ...newData, activo: e.target.value })}
-                  placeholder="Ej: Base de datos de clientes" 
+              <Form.Item label="Activo" required>
+                <Input
+                  name="activo"
+                  value={newData.activo}
+                  onChange={(e) => setNewData({ activo: e.target.value })}
+                  placeholder="Ej: Base de datos de clientes"
                 />
               </Form.Item>
             </Form>
@@ -371,15 +354,16 @@ const App = () => {
 
           <Table
             components={components}
-            rowClassName={() => 'editable-row'}
+            rowClassName={() => "editable-row"}
             bordered
             dataSource={dataSource}
             columns={columns}
+            pagination={{ pageSize: 8 }}
           />
         </div>
       </Content>
-      
-      <Footer style={{ textAlign: 'center' }}>
+
+      <Footer style={{ textAlign: "center" }}>
         Sistema de Auditoría de Riesgos ©{new Date().getFullYear()}
       </Footer>
     </Layout>
